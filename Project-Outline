@@ -12,3 +12,20 @@ TENTATIVE PROJECT STRUCTURE:
 -Some way to link associated products to their recipe counterparts.
 -Dashboard for Jason (?)
 -Web component for online customers.
+
+
+TENTATIVE DELIVERABLE FORMAT
+Tab 1: Cocktail Finder
+	Input: 
+    •	Spirits
+    •	Mixers
+	Output:
+    •	Cocktail Suggestions
+Update:
+    •	Divine Cocktail Database
+      o	Cocktail Name if new cocktail
+Tab 2: 
+Tab 3: Divine Cocktail Database
+	Visual of the Divine Cocktail Table
+	Update: Add cocktails
+
