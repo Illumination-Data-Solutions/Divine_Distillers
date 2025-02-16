@@ -1,0 +1,153 @@
+---
+title: "pos_cleaning"
+author: "Tyler Riddick"
+date: "2025-02-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+```
+
+## Data Cleaning
+
+The January POS data from Divine Distillers are stored in a xlsx file format in a series of spreadsheets. Each sheet represents a single day in the month of January 2025 and represent either the sales done at the main establishment (Inferno) or at tasting events (first taste).
+
+Furthermore, each sheet is divided vertically in half. The right half has the most detail. The columns are Item Name, Item Variation (such as volume), Items Sold, and Gross Sales. On top of this, each sheet is split into three different sections horizontally organized from top to bottom as bottles, individual drinks, and food, respectively. We will be using the tidyverse and readxl packages to extract the data.
+
+Scrolling through the sheets reveals a problem, though. On some sheets, the items start in column G and in some sheets they start in column H. So we are going to take the first 4 columns and then pull the item variations. 
+
+
+```{r extract}
+# Setting path and extracting tab names to use for the date column
+path = 'C:/Users/tyler/.vscode/Capstone/env/Divine_Distillers/Event Sales Jan 2025.xlsx'
+
+jan_names = excel_sheets(path)
+```
+
+Next is doing some minor dataframe edits, such as adding columns for the price, date, and source (either Inferno or First Taste). Because we are only taking the right half of each sheet, the price will need to be calculated.
+
+Next up is removing the food rows and bringing everything together by removing the interstitial null values. We accomplish this by identifying the indices of the rows where the item_name and gross_sales columns are null at the same time (which indicates a break between each of the three horizontally arranged sections).
+
+Now that we have done this for one of the sheets, we can build a function to do this for all of the sheets. 
+
+```{r function}
+sheet_clean = function(x) {
+  # Reading in the sheet in position x (helpful for our for loop later)
+  sheet = read_excel(path,sheet=x)
+  
+  # Getting the sheet metadata
+  sheet_meta = jan_names[x]
+  sheet_meta_split = strsplit(sheet_meta," ", fixed = FALSE)[[1]]
+  
+  # Building the date and source for each sheet
+  sheet_date = paste(c(sheet_meta_split[1],"25"),collapse="-")
+  sheet_source = paste(sheet_meta_split[-1],collapse = " ")
+  
+  # Turning the 2nd row into a vector rather than a matrix
+  var_row = unlist(sheet[2,], use.names = FALSE)
+  
+  # Selecting the index of the column where the second row is "Item Variation" so we can extract the whole column. The item_var_col is that column
+  col_index = which(var_row == "Item Variation")
+  item_var_col = sheet[,col_index, drop = FALSE]
+  
+  # Binding the item variation column
+  sheet = bind_cols(sheet, item_var_col)
+  
+  
+  # Doing some sub-setting on the original dataframe. Select rows 1 and 3 through 5 (ignoring the size column). Binding the Item Variation column, adding the date and source columns, and removing the first two rows. Some sheets, where there are no bottles sold, will allow us to just take the first 4 columns. We'll identify these sheets by the label of the second column. We use the variable x to specify which kind of sheet it is. This will be useful when we do the null removal later as columns with no bottles sold will be missing an entire section.
+  if (sheet[2,2] == "Size") {
+      sheet = sheet %>% 
+        select(c(1,3,4,5)) %>%
+        bind_cols(item_var_col) %>%
+        mutate(date = sheet_date,
+               source = sheet_source
+               ) %>%
+        filter(!row_number() %in% c(1,2))
+      x = 1
+  } else if (sheet[2,2] == "# Sold") {
+      sheet = sheet %>%
+        select(c(1,2,3,4)) %>%
+        bind_cols(item_var_col) %>%
+        mutate(date = sheet_date,
+               source = sheet_source
+               ) %>%
+        filter(!row_number() %in% c(1,2))
+      x = 2
+  }
+  
+  # Renaming the columns
+  colnames(sheet) = c("item_name","items_sold","price","gross_sales","item_var","date","source")
+  
+  # Changing column data types
+  sheet = sheet %>%
+    mutate(items_sold = as.numeric(items_sold),
+           price = as.numeric(price),
+           gross_sales = as.numeric(gross_sales),
+           item_var = factor(item_var),
+           date = as.Date(date,
+                          format = "%m-%d-%y"),
+           source = factor(source)
+    )
+  # Removing the nulls
+  # Finding the rows so that we can just extract the drinks and ignore the food
+  nulls = which(is.na(sheet$item_name) & is.na(sheet$gross_sales))
+  
+  # This part is kind of ugly. If the sheet had bottles sold (x = 1), there will be two sections of interest (bottles and drinks). If the sheet had no bottles sold (x = 2), there will be only one section of interest (drinks). This will affect which null row value we will stop at. For x = 2, we have to stop one null row earlier. This creates a bunch of cases and null possibilities. In theory, we can have up to 5 nulls (indicating bottles, drinks, food, flights, and merch, respectively)
+  
+  if (length(nulls) == 3 & x == 1) {
+      sheet = sheet[1:nulls[2],]
+  } else if (length(nulls) < 3 & length(nulls) > 0 & x == 1) {
+      sheet = sheet[1:nulls[length(nulls)],]
+  } else if (length(nulls < 3 & length(nulls) > 0 & x == 2)){
+      sheet = sheet[1:nulls[1],]
+  }
+    else if (length(nulls) > 3 & x == 1) {
+      sheet = sheet[1:nulls[2],]
+  } else if (length(nulls) > 3 & x == 2) {
+      sheet = sheet[1:nulls[1]]
+  }
+    else if (length(nulls) == 3 & x == 2){
+      sheet = sheet[1:nulls[length(nulls)-1],]
+  }
+  
+  sheet = sheet[!is.na(sheet$item_name),]
+  
+  # Selecting just the stuff above the second null and then removing the rows with null item_name values
+  
+  return(sheet)
+}
+```
+
+Now to bring it all together to get the final dataset
+
+```{r}
+jan_sales = data.frame(
+  item_name = character(),
+  items_sold = double(),
+  price = double(),
+  gross_sales = double(),
+  item_var = factor(),
+  date = as.Date(character(), format = "%m-%d-%y"),
+  source = factor()
+)
+
+for(x in 1:length(jan_names)) {
+  print(paste(c("Starting",jan_names[x])))
+  temp_df = sheet_clean(x)
+  print(length(nulls))
+  jan_sales = rbind(jan_sales, temp_df)
+  print(jan_sales)
+}
+
+```
+
+```{r}
+jan_sales
+```
+
+```{r}
+write.csv(jan_sales,'jan_sales.csv')
+```
+}
